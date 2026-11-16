@@ -1,0 +1,94 @@
+{
+  "name": "dbfreeze",
+  "version": "0.4.0",
+  "description": "Snapshot database (Postgres/MySQL) ke NDJSON dan restore transaksional. ORM-agnostik, ada AGENTS.md untuk AI agent. | ORM-agnostic DB snapshot: export to NDJSON, seed back safely.",
+  "keywords": [
+    "database",
+    "snapshot",
+    "seed",
+    "export",
+    "ndjson",
+    "postgres",
+    "mysql",
+    "prisma",
+    "drizzle",
+    "fixtures",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "author": "mdikifahriza",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mdikifahriza/dbfreeze.git"
+  },
+  "homepage": "https://github.com/mdikifahriza/dbfreeze#readme",
+  "bugs": {
+    "url": "https://github.com/mdikifahriza/dbfreeze/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "dbfreeze": "./dist/cli.cjs"
+  },
+  "files": [
+    "dist",
+    "AGENTS.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsup && chmod +x dist/cli.cjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build"
+  },
+  "peerDependencies": {
+    "@prisma/client": "*",
+    "drizzle-orm": "*",
+    "mysql2": "*",
+    "pg": "*"
+  },
+  "peerDependenciesMeta": {
+    "@prisma/client": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    },
+    "pg": {
+      "optional": true
+    },
+    "mysql2": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "drizzle-orm": "^0.36.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
