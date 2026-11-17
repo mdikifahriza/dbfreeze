@@ -47,6 +47,7 @@
   },
   "files": [
     "dist",
+    "examples",
     "AGENTS.md",
     "README.md",
     "LICENSE"
@@ -62,6 +63,7 @@
     "build": "rm -rf dist && tsup && chmod +x dist/cli.cjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/*.test.ts",
+    "demo": "node examples/inmem/demo.mjs",
     "prepublishOnly": "npm run typecheck && npm test && npm run build"
   },
   "peerDependencies": {

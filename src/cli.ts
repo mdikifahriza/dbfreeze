@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path'
 import fs from 'node:fs'
+import readline from 'node:readline/promises'
 import type { DbfreezeConfig } from './types'
 
 const CONFIG_CANDIDATES = [
@@ -24,16 +25,32 @@ function printUsage() {
   console.log(`dbfreeze — snapshot export/seed, agnostik ORM & DB
 
 Pemakaian:
-  npx dbfreeze init [--db postgres|mysql] [--dir ./data] [--force] [--no-agent-doc]
-                           Buat dbfreeze.config.(ts|cjs) awal + AGENTS.md untuk AI agent
+  npx dbfreeze init [--db postgres|mysql] [--dir ./data] [--force] [--no-agent-doc] [--no-export]
+                           Buat dbfreeze.config.(ts|cjs) awal + AGENTS.md untuk AI agent.
+                           Dengan TTY interaktif: menawarkan langsung menjalankan export setelah config dibuat.
   npx dbfreeze generate [--schema <path>] [--out <path>]
                            Baca schema.prisma, tulis daftar tabel otomatis
   npx dbfreeze export [--tables a,b] [--no-doc]
                            Dump semua tabel ke NDJSON + manifest.json (+ _schema.json, SCHEMA.md
                            kalau adapter bisa membaca struktur DB). --tables = export parsial.
+  npx dbfreeze info [--tables a,b]
+                           Cetak engine, koneksi, dan jumlah baris per tabel (tanpa dump)
+  npx dbfreeze doctor      Cek config, koneksi DB, dan writable dataDir
   npx dbfreeze seed       Restore snapshot kembali ke DB (satu transaksi, rollback kalau gagal)
+  npx dbfreeze seed --tables users,posts   Restore hanya tabel tertentu (partial restore)
+                           Catatan: tabel lain TIDAK di-truncate dan tidak di-restore
   npx dbfreeze seed --dry-run
                            Cek snapshot (checksum, urutan insert) tanpa menyentuh DB
+
+  Opsi seed:
+    --yes                    Lewati konfirmasi interaktif (untuk CI/pipeline)
+    --i-know-this-overwrites-prod   Override: seed ke DB yang namanya terlihat seperti produksi
+                                    (nama mengandung prod/live/production)
+
+  Guard keamanan (untuk seed):
+    - Target koneksi (host/port/database) dicetak SEBELUM menyentuh DB
+    - Seed ke DB yang namanya mengandung prod|live|production diblokir
+    - --dry-run selalu lolos (read-only); localhost selalu boleh
 
 Default --schema: ./prisma/schema.prisma
 Default --out:    ./dbfreeze.tables.generated.ts
@@ -168,6 +185,25 @@ function loadDotEnv(cwd: string) {
   }
 }
 
+function detectSeedTarget() {
+  // target dari DATABASE_URL — diekstrak via core/guard (teruji, tidak membocorkan kredensial)
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const { parseDatabaseUrl } = require('./core/guard')
+  return parseDatabaseUrl(process.env.DATABASE_URL ?? '')
+}
+
+async function askYesNo(question: string, defaultYes = false): Promise<boolean> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout })
+  try {
+    const hint = defaultYes ? '[Y/n]' : '[y/N]'
+    const answer = (await rl.question(`${question} ${hint} `)).trim().toLowerCase()
+    if (answer === '') return defaultYes
+    return answer === 'y' || answer === 'yes'
+  } finally {
+    rl.close()
+  }
+}
+
 async function runInitCommand(cwd: string) {
   const { runInit } = await import('./init')
   const db = flagValue('--db', '')
@@ -189,17 +225,132 @@ async function runInitCommand(cwd: string) {
     console.log('  1. Pastikan DATABASE_URL benar (seed MENIMPA isi tabel di DB itu)')
     console.log('  2. npx dbfreeze export')
     console.log('  3. npx dbfreeze seed --dry-run')
+
+    // `dbfreeze init` interaktif: tawarkan export langsung (kecuali non-interaktif/--no-export)
+    if (!process.argv.includes('--no-export') && !process.env.CI && process.stdout.isTTY) {
+      if (await askYesNo('\nJalankan `npx dbfreeze export` sekarang?', true)) {
+        console.log('\nMenjalankan `npx dbfreeze export`…\n')
+        const { spawnSync } = await import('node:child_process')
+        const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx'
+        const child = spawnSync(npx, ['dbfreeze', 'export'], { stdio: 'inherit', cwd })
+        if (child.status === 0) {
+          console.log('\n✅ Export berhasil. Mau divalidasi juga?')
+          if (await askYesNo('Jalankan `npx dbfreeze seed --dry-run` sekarang?', true)) {
+            spawnSync(npx, ['dbfreeze', 'seed', '--dry-run'], { stdio: 'inherit', cwd })
+          }
+        }
+      }
+    }
   } catch (err) {
     console.error('❌', err instanceof Error ? err.message : err)
     process.exit(1)
   }
 }
 
+async function runInfoCommand(cwd: string) {
+  loadDotEnv(cwd)
+  const config = await loadConfig(cwd)
+  const adapter = config.adapter
+  if (typeof adapter.introspect !== 'function') {
+    console.error('❌ Adapter tidak bisa membaca struktur DB (butuh createSqlAdapter atau adapter yang punya method introspect()).')
+    process.exit(1)
+  }
+  try {
+    const { MIGRATION_TABLES } = await import('./core/resolve')
+    const schema = await adapter.introspect()
+    const excluded = new Set([...(config.exclude ?? [])])
+    const onlyRaw = flagValue('--tables', '')
+    const only = onlyRaw ? new Set(onlyRaw.split(',').map((s) => s.trim()).filter(Boolean)) : null
+
+    const tableNames = Object.keys(schema.tables).filter((n) => !MIGRATION_TABLES.includes(n) && !excluded.has(n)).sort()
+    const shown = tableNames.filter((n) => !only || only.has(n))
+
+    console.log(`Engine   : ${schema.dialect}`)
+    console.log(`Exclude  : ${[...excluded].length ? [...excluded].join(', ') : '(tidak ada)'}`)
+    console.log(`Redact   : ${Object.keys(config.redact ?? {}).length ? Object.keys(config.redact ?? {}).join(', ') : '(tidak ada)'}`)
+    console.log(`Tabel    : ${shown.length}${only ? ` (dari ${tableNames.length})` : ''}`)
+
+    for (const name of shown) {
+      const pk: string[] = (schema.tables as any)[name]?.primaryKey ?? []
+      try {
+        const rows = typeof adapter.count === 'function' ? await adapter.count(name) : '?'
+        console.log(`  - ${name}${pk.length ? ' [PK: ' + pk.join(', ') + ']' : ''} — ${rows} baris`)
+      } catch {
+        console.log(`  - ${name}${pk.length ? ' [PK: ' + pk.join(', ') + ']' : ''} — (gagal membaca jumlah baris)`)
+      }
+    }
+  } finally {
+    await config.adapter.close?.()
+  }
+}
+
+async function runDoctorCommand(cwd: string) {
+  const checks: { label: string; ok: boolean; detail?: string }[] = []
+  const add = (label: string, ok: boolean, detail?: string) => checks.push({ label, ok, detail })
+
+  loadDotEnv(cwd)
+  let config: DbfreezeConfig | null = null
+  try {
+    config = await loadConfig(cwd)
+    add('config', true, 'dbfreeze.config.* ditemukan dan parse dengan benar')
+  } catch (err) {
+    add('config', false, err instanceof Error ? err.message : String(err))
+  }
+
+  if (config) {
+    try {
+      const { MIGRATION_TABLES } = await import('./core/resolve')
+      if (typeof config.adapter.introspect !== 'function') {
+        add('introspect', false, 'adapter tidak punya method introspect() — pakai createSqlAdapter untuk diagnostic penuh')
+      } else {
+        const schema = await config.adapter.introspect()
+        add('introspect', true, `dialect: ${schema.dialect}, ${Object.keys(schema.tables).length} tabel terbaca`)
+        const excluded = new Set(config.exclude ?? [])
+        const missing = MIGRATION_TABLES.filter((t) => !schema.tables[t])
+        add('table_migrations', true, missing.length === MIGRATION_TABLES.length ? 'tidak perlu ditulis ulang' : 'ok')
+        if (excluded.size > 0) {
+          add('exclude', true, [...excluded].join(', '))
+        }
+      }
+    } catch (err) {
+      add('introspect', false, err instanceof Error ? err.message : String(err))
+    }
+
+    try {
+      fs.mkdirSync(path.resolve(cwd, config.dataDir), { recursive: true })
+      const probe = path.resolve(cwd, config.dataDir, `.dbfreeze-doctor-${process.pid}`)
+      fs.writeFileSync(probe, 'ok')
+      fs.unlinkSync(probe)
+      add('dataDir', true, `${config.dataDir} dapat ditulis`)
+    } catch (err) {
+      add('dataDir', false, err instanceof Error ? err.message : String(err))
+    }
+
+    try { config.adapter.close?.() } catch { /* ignore */ }
+  }
+
+  for (const c of checks) {
+    console.log(`${c.ok ? '✓' : '❌'} ${c.label}${c.detail ? ': ' + c.detail : ''}`)
+  }
+  const bad = checks.filter((c) => !c.ok).length
+  process.exit(bad === 0 ? 0 : 1)
+}
+
 async function main() {
   const command = process.argv[2]
-  if (command !== 'export' && command !== 'seed' && command !== 'generate' && command !== 'init') {
+  if (command !== 'export' && command !== 'seed' && command !== 'generate' && command !== 'init' && command !== 'info' && command !== 'doctor') {
     printUsage()
     process.exit(command ? 1 : 0)
+  }
+
+  if (command === 'doctor') {
+    await runDoctorCommand(process.cwd())
+    return
+  }
+
+  if (command === 'info') {
+    await runInfoCommand(process.cwd())
+    return
   }
 
   if (command === 'init') {
@@ -215,6 +366,13 @@ async function main() {
   loadDotEnv(process.cwd())
   const config = await loadConfig(process.cwd())
   const { exportSnapshot, seedFromSnapshot } = await import('./index')
+  const { seedGuardBlock, formatTarget } = await import('./core/guard')
+
+  // Cetak target SEBELUM menyentuh DB (tanpa kredensial) — sama seperti di composer
+  const target = detectSeedTarget()
+  if (command === 'seed' && target) {
+    console.log(`Target: ${formatTarget(target)}\n`)
+  }
 
   try {
     if (command === 'export') {
@@ -232,12 +390,40 @@ async function main() {
         writeSchemaDoc: !process.argv.includes('--no-doc'),
       })
     } else {
+      const dryRun = process.argv.includes('--dry-run')
+      const onlyRaw = flagValue('--tables', '')
+      const onlyTables = onlyRaw ? onlyRaw.split(',').map((x) => x.trim()).filter(Boolean) : undefined
+      // P0 — production guard: blok seed ke DB yang namanya terlihat produksi
+      if (target) {
+        const block = seedGuardBlock({
+          host: target.host,
+          database: target.database,
+          dryRun,
+          overrideProdGuard: process.argv.includes('--i-know-this-overwrites-prod'),
+        })
+        if (block) {
+          console.error('❌ ' + block)
+          process.exit(1)
+        }
+      }
+      // P0 — konfirmasi sebelum seed: readline di stdin (TTY, atau pipe 'y'/'n').
+      // Dilewati hanya kalau --yes atau CI (untuk pipeline yang sengaja non-interaktif).
+      // EOF/stdin kosong = jawaban N → batal.
+      if (!dryRun && !process.env.CI && !process.argv.includes('--yes')) {
+        const dest = target ? formatTarget(target) : '(tidak terdeteksi dari DATABASE_URL)'
+        console.log(`PERINGATAN: ini akan MENGHAPUS dan menimpa isi tabel di: ${dest}`)
+        if (!(await askYesNo('Lanjutkan?'))) {
+          console.log('Dibatalkan. Tidak ada yang berubah.')
+          process.exit(0)
+        }
+      }
       await seedFromSnapshot({
         adapter: config.adapter,
         tables: config.tables,
         dataDir: config.dataDir,
         deferredColumns: config.deferredColumns,
-        dryRun: process.argv.includes('--dry-run'),
+        dryRun,
+        onlyTables,
       })
     }
   } finally {
@@ -246,6 +432,9 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('❌', err)
+  // Semua error dbfreeze ditulis untuk memuat petunjuk apa yang harus dilakukan.
+  console.error('\n❌ ' + (err instanceof Error ? err.message : String(err)))
+  if (process.env.DBFREEZE_DEBUG && err instanceof Error) console.error(err.stack)
+  else console.error('   (set DBFREEZE_DEBUG=1 untuk stack trace)')
   process.exit(1)
 })

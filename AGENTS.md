@@ -32,18 +32,21 @@ Untuk menjawab pertanyaan tentang data, cukup baca file-file ini. Jangan menjala
 ## Perintah
 
 ```bash
-npx dbfreeze init [--db postgres|mysql] [--dir ./data] [--force] [--no-agent-doc]
+npx dbfreeze init [--db postgres|mysql] [--dir ./data] [--force] [--no-agent-doc] [--no-export]
+                           # Buat config + AGENTS.md; dengan TTY menawarkan langsung export
 npx dbfreeze export [--tables a,b] [--no-doc]    # DB -> file (aman, hanya membaca DB)
+npx dbfreeze info [--tables a,b]                 # Cetak engine + jumlah baris per tabel
+npx dbfreeze doctor                              # Cek config + koneksi DB + writable dataDir
 npx dbfreeze seed --dry-run                       # validasi snapshot, DB tidak disentuh
-npx dbfreeze seed                                 # file -> DB (MENIMPA isi tabel)
-npx dbfreeze generate [--schema p] [--out p]      # hanya mode ORM Prisma
+npx dbfreeze seed                                 # file -> DB (MENIMPA isi tabel; minta konfirmasi)
+npx dbfreeze seed --yes                           # non-interaktif (CI)
+npx dbfreeze seed --i-know-this-overwrites-prod   # override untuk DB bernama prod/live/production
+npx dbfreeze seed --tables users,posts            # partial restore
 ```
 
 ## Aturan keselamatan (wajib)
 
-1. **`seed` menghapus dan menimpa isi tabel di database yang ditunjuk `DATABASE_URL`.** Tidak ada pengaman
-   host. Jangan jalankan `seed` tanpa persetujuan eksplisit pengguna di percakapan ini, dan periksa dulu
-   `DATABASE_URL` mengarah ke DB dev/lokal, bukan produksi. Selalu jalankan `seed --dry-run` lebih dulu.
+1. **`seed` menghapus dan menimpa isi tabel di database yang ditunjuk `DATABASE_URL`.** dbfreeze akan mencetak `Target: host=... database=...` sebelum menyentuh DB, dan seed ke DB yang namanya mengandung `prod`/`live`/`production` diblokir (override: `--i-know-this-overwrites-prod`). Jangan jalankan `seed` tanpa persetujuan eksplisit pengguna di percakapan ini, dan periksa dulu koneksi yang ditampilkan mengarah ke DB dev/lokal, bukan produksi. Selalu jalankan `seed --dry-run` lebih dulu.
 2. `export` aman untuk DB mana pun (read-only), tetapi hasilnya adalah **data asli**. Jangan commit snapshot
    yang berisi password, token, email, atau telepon kecuali `redact` sudah diatur di config.
 3. Jangan mengedit `*.ndjson` atau `manifest.json` dengan tangan: checksum sha256 akan tidak cocok dan seed

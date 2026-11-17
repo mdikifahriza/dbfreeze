@@ -10,6 +10,43 @@ Tujuan pemakaian:
 2. AI bisa membaca isi DB dari file, tanpa koneksi ke DB.
 3. Gonta-ganti ORM / jenis DB.
 
+## Quickstart (3 langkah)
+
+```bash
+npm install dbfreeze pg                        # atau mysql2
+npx dbfreeze init                              # deteksi engine, buat config + AGENTS.md (lalu tawarkan langsung export)
+npx dbfreeze export                            # dump semua tabel
+```
+
+`npx dbfreeze seed --dry-run` selalu aman — hanya membaca DB (read-only). Tidak ada yang berubah.
+
+Setelah itu lihat:
+
+```bash
+npx dbfreeze seed --dry-run                    # validasi + tampilkan rencana tanpa menyentuh DB
+npx dbfreeze seed                              # restore — menimpa isi tabel (diminta konfirmasi; pakai --yes untuk CI)
+```
+
+Perintah lain yang berguna:
+
+```bash
+npx dbfreeze info                              # cetak engine + daftar tabel + jumlah baris
+npx dbfreeze doctor                            # cek config, koneksi DB, dan writable dataDir
+npx dbfreeze seed --yes                        # non-interaktif (untuk CI/pipeline)
+npx dbfreeze seed --dry-run                    # validasi saja, tidak menyentuh DB
+```
+
+## Pilih versi
+
+Apakah Anda menggunakan proyek PHP/Laravel atau proyek JS?
+
+| Proyek | Pakai | Instalasi |
+|---|---|---|
+| Node.js / Prisma / Drizzle / framework JS | `dbfreeze` (package ini) | `npm install dbfreeze pg` / `mysql2` |
+| Laravel / PHP | `prhatara/dbfreeze` (Composer) | `composer require prhatara/dbfreeze` lalu `php artisan dbfreeze:install` |
+
+Keduanya menulis snapshot NDJSON v2 dan didesain agar saling kompatibel untuk tabel yang sama. Versi Composer adalah port khusus untuk Laravel dan tidak memerlukan Node di server.
+
 ## Mode SQL (v0.3): tanpa ORM, tabel dibaca dari DB
 
 Sumber kebenarannya adalah database itu sendiri, bukan `schema.prisma` atau nama field ORM.
@@ -122,7 +159,7 @@ Karena seed menghapus isi tabel, urutannya dibuat defensif:
 7. Timeout transaksi Prisma dinaikkan (default dbfreeze: 10 menit; bawaan Prisma cuma 5 detik).
 8. `npx dbfreeze seed --dry-run`: validasi snapshot dan lihat rencana tanpa menyentuh DB.
 
-> Seed **menimpa** isi tabel di DB yang dituju, termasuk DB remote. Tidak ada pengaman host di tool ini — pastikan `DATABASE_URL` yang dipakai memang yang kamu maksud.
+> Seed **menimpa** isi tabel di DB yang dituju, termasuk DB remote. dbfreeze hanya masuk ke DB bila `DATABASE_URL`-nya terdeteksi — untuk koneksi remote, tool ini akan mencetak `Target: host=... database=...` sebelum menyentuh apa pun, dan seed ke database yang namanya mengandung `prod|live|production` **diblokir** kecuali ditambah flag `--i-know-this-overwrites-prod`. Selalu `seed --dry-run` dulu sebagai langkah pertama.
 
 Catatan per engine:
 - **Postgres:** `TRUNCATE ... RESTART IDENTITY` (transaksional).
@@ -197,10 +234,18 @@ Config `.ts` butuh `tsx` terpasang di project (`npm i -D tsx`).
 ### 3. Jalankan
 
 ```bash
-npx dbfreeze export
-npx dbfreeze seed --dry-run
-npx dbfreeze seed
+npx dbfreeze export                # dump semua tabel; --tables users,posts untuk parsial; --no-doc skip SCHEMA.md
+npx dbfreeze info                  # cetak engine + jumlah baris per tabel tanpa dump
+npx dbfreeze doctor                # cek config + koneksi DB + writable dataDir
+npx dbfreeze seed --dry-run        # validasi snapshot tanpa menyentuh DB
+npx dbfreeze seed                  # restore (minta konfirmasi di TTY; non-interaktif butuh --yes atau CI=true)
+npx dbfreeze seed --tables users,posts   # partial restore — tabel lain tidak disentuh sama sekali
 ```
+
+Lain-lain:
+- `seed` ke DB bernama `prod`/`live`/`production` ditolak; override `--i-know-this-overwrites-prod`.
+- `--dry-run` selalu boleh tanpa konfirmasi (read-only).
+- `DBFREEZE_DEBUG=1` → cetak stack trace saat error.
 
 ## Lewat kode
 

@@ -21,6 +21,8 @@ export interface SeedOptions {
   chunkSize?: number
   /** Validate the snapshot and print the plan, but do not touch the database. */
   dryRun?: boolean
+  /** Restore only these tables (by `file` name). Other tables are left completely untouched. */
+  onlyTables?: string[]
   log?: (msg: string) => void
 }
 
@@ -97,16 +99,32 @@ export async function seedFromSnapshot({
   deferredColumns: configuredDeferred,
   chunkSize = 1000,
   dryRun = false,
+  onlyTables,
   log = console.log,
 }: SeedOptions): Promise<void> {
+  // Partial restore: subset tabel yang diminta, sisanya benar-benar tidak disentuh
   let only: string[] | undefined
   if (!configuredTables) {
     const manifest = readManifest(dataDir)
     if (!manifest) throw new Error('Tanpa `tables` di config, seed butuh manifest.json untuk tahu tabel mana yang dipulihkan.')
     only = Object.keys(manifest.tables)
   }
+  if (onlyTables?.length) {
+    const requested = onlyTables.map((s) => s.trim()).filter(Boolean)
+    const base = only ?? configuredTables!.map((t) => t.file)
+    const missing = requested.filter((r) => !base.includes(r))
+    if (missing.length) throw new Error(`Tabel tidak ada di snapshot: ${missing.join(', ')}`)
+    only = requested
+  }
   const resolved = await resolveTables({ adapter, tables: configuredTables, deferredColumns: configuredDeferred, only, log })
   const deferredColumns = resolved.deferredColumns
+
+  if (onlyTables?.length) {
+    log(`↺ Partial restore — hanya tabel berikut yang ditouch: ${onlyTables.map((s) => s.trim()).filter(Boolean).join(', ')}`)
+    log('   Tabel lain di DB TIDAK di-truncate dan TIDAK di-restore. State-nya tetap seperti sekarang.')
+  } else if (only?.length) {
+    log(`   Seed seluruh tabel snapshot: ${only.join(', ')}`)
+  }
 
   const ordered = orderTables(resolved.tables)
   const loaded = loadSnapshot(ordered, dataDir, log)
