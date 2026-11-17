@@ -1,6 +1,6 @@
 {
   "name": "dbfreeze",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Snapshot database (Postgres/MySQL) ke NDJSON dan restore transaksional. ORM-agnostik, ada AGENTS.md untuk AI agent. | ORM-agnostic DB snapshot: export to NDJSON, seed back safely.",
   "keywords": [
     "database",
