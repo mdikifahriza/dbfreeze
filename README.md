@@ -38,9 +38,15 @@ Yang berubah dibanding mode ORM:
 - **`_schema.json` dan `SCHEMA.md`** ditulis di folder snapshot, jadi AI paham struktur data tanpa koneksi DB.
   `--no-doc` melewati `SCHEMA.md`.
 - **Tipe kanonik.** Nilai dibaca dan ditulis menurut tipe kolom di DB: `int`, `bigint`, `decimal` (string),
-  `float`, `bool`, `text`, `uuid`, `enum`, `datetime` (ISO-8601 UTC), `date`, `time`, `json`, `bytes` (base64).
-  Snapshot dari MySQL bisa di-seed ke Postgres dan sebaliknya. `tinyint(1)` dibaca sebagai bool, dan tanggal
+  `float`, `bool`, `text`, `uuid`, `enum`, `datetime` (ISO-8601 UTC), `date`, `time`, `json`, `bytes` (base64),
+  `bit` (string `0`/`1`), `array` (literal pg `{…}`). Durasi (`interval`), `inet`/`cidr`/`macaddr`, dan
+  `tsvector`/`tsquery` disimpan sebagai teks literal. `money` dibaca sebagai `numeric` (simbol mata uang
+  dibuang, nilai presisi utuh). `tinyint(1)` dibaca sebagai bool, dan tanggal
   `0000-00-00` jadi `NULL` dengan peringatan. `datetime`/`timestamp` tanpa zona dianggap UTC.
+  Snapshot dari MySQL bisa di-seed ke Postgres dan sebaliknya.
+  Array Postgres disimpan sebagai literal `q::text` (mis. `{1,2,3}`) — roundtrip same-engine akurat
+  termasuk presisi; MySQL tidak punya tipe array (cross-engine untuk kolom itu memang tidak berlaku).
+  Nilai biasa (non-array) tetap bisa lintas engine seperti sebelumnya.
 - **Export konsisten.** Semua tabel dibaca dalam satu transaksi read-only (Postgres `REPEATABLE READ READ ONLY`,
   MySQL `WITH CONSISTENT SNAPSHOT`), jadi aman walau aplikasi masih menulis.
 - **Streaming.** Tabel ber-PK dibaca per batch (`batchSize`, default 5000, keyset pagination) dan ditulis langsung
@@ -50,7 +56,7 @@ Yang berubah dibanding mode ORM:
 - **Seed tanpa `tables`.** Tabel yang dipulihkan = isi `manifest.json`; urutan insert dan FK tertunda dihitung dari
   DB tujuan. Tabel di manifest yang tidak ada di DB tujuan membuat seed batal sebelum DB disentuh.
 - **Kolom generated** dilewati saat export. **Postgres `GENERATED ALWAYS AS IDENTITY`** di-insert dengan
-  `OVERRIDING SYSTEM VALUE`. Tipe yang belum didukung (array, interval, geometry, bit, ...) membuat tabelnya ditolak
+  `OVERRIDING SYSTEM VALUE`. Tipe yang belum didukung (geometry, dan tipe Postgres eksotik lainnya seperti array enumerasi/komposit ter-parse driver) membuat tabelnya ditolak
   dengan pesan jelas; keluarkan lewat `exclude`.
 
 ### Redaksi kolom sensitif (nonaktif secara default)
@@ -231,6 +237,8 @@ Implement `SnapshotAdapter` (lihat `src/types.ts`): `findMany`, `insertMany`, `u
 
 - **Mode ORM** (Prisma/Drizzle adapter): nama kolom di snapshot adalah nama field ORM, `findMany` memuat satu tabel penuh ke memori, PK diasumsikan `id` untuk deferred FK, dan export tidak konsisten antar-tabel. Pakai mode SQL untuk menghindari semua itu.
 - **Mode SQL:** hanya Postgres dan MySQL/MariaDB. Skema (tabel, enum, tipe) di DB tujuan harus sudah dibuat lewat migrasi; snapshot hanya berisi data. Tabel ber-PK diurutkan menurut collation DB, jadi urutan baris bisa berbeda antar-engine.
+- **Tipe yang belum didukung:** `geometry`/`geography` (PostGIS maupun MySQL) dan tipe Postgres eksotik yang driver-nya tidak bisa menyerahkan sebagai teks (mis. array dari tipe komposit) membuat tabelnya ditolak dengan pesan jelas; keluarkan lewat `exclude`. Array Postgres hanya didukung same-engine.
+- **Array lintas engine tidak ada**: kolom `array` Postgres ditulis sebagai literal teks di snapshot; MySQL tidak memiliki padanan tipe array.
 - **MySQL:** tabel dengan FK melingkar atau self-reference gagal di `DELETE` saat seed kecuali memakai `createMysqlTruncate({ ignoreForeignKeys: true })`.
 - Struktur DB di-cache per instance adapter; buat adapter baru setelah menjalankan migrasi.
 - ⚠️ Isi snapshot adalah **data asli** kecuali kolomnya diatur lewat `redact`. Jangan commit ke repo yang tidak semestinya.

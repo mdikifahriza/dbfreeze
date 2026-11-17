@@ -20,7 +20,7 @@ function list(v: unknown): string[] {
 }
 
 /** Postgres `information_schema.columns.data_type` / `udt_name` -> canonical type. */
-function postgresType(dataType: string, udt: string): CanonicalType {
+export function postgresType(dataType: string, udt: string): CanonicalType {
   switch (dataType) {
     case 'smallint':
     case 'integer':
@@ -29,6 +29,12 @@ function postgresType(dataType: string, udt: string): CanonicalType {
       return 'bigint'
     case 'numeric':
       return 'decimal'
+    case 'money':
+      // Read as ::numeric so the sign and digits survive (no currency symbols in the snapshot).
+      return 'decimal'
+    case 'interval':
+      // Driver parses to an object; read q::text instead and store the literal (re-insert coerces).
+      return 'text'
     case 'real':
     case 'double precision':
       return 'float'
@@ -52,6 +58,18 @@ function postgresType(dataType: string, udt: string): CanonicalType {
       return 'json'
     case 'bytea':
       return 'bytes'
+    case 'macaddr':
+    case 'inet':
+    case 'cidr':
+    case 'tsvector':
+    case 'tsquery':
+      return 'text'
+    case 'bit':
+    case 'bit varying':
+      return 'bit'
+    case 'ARRAY':
+      // Stored as the array_out literal text (e.g. "{1,2,3}"); array_in accepts it back exactly.
+      return 'array'
     case 'USER-DEFINED':
       return udt === 'citext' ? 'text' : 'enum'
     default:
@@ -60,7 +78,15 @@ function postgresType(dataType: string, udt: string): CanonicalType {
 }
 
 /** MySQL `COLUMN_TYPE` / `DATA_TYPE` -> canonical type. `tinyint(1)` is MySQL's boolean. */
-function mysqlType(dataType: string, columnType: string): CanonicalType {
+/**
+ * MySQL reports `EXTRA = 'DEFAULT_GENERATED'` for columns whose DEFAULT is CURRENT_TIMESTAMP,
+ * which must NOT be skipped. Only real generated/computed columns are.
+ */
+export function isGeneratedExtra(extra: string): boolean {
+  return /GENERATED|PERSISTENT|VIRTUAL|STORED/i.test(extra.replace(/DEFAULT_GENERATED/gi, ''))
+}
+
+export function mysqlType(dataType: string, columnType: string): CanonicalType {
   const dt = dataType.toLowerCase()
   if (dt === 'tinyint' && /^tinyint\(1\)/i.test(columnType)) return 'bool'
   switch (dt) {
@@ -87,6 +113,9 @@ function mysqlType(dataType: string, columnType: string): CanonicalType {
       return 'text'
     case 'enum':
       return 'enum'
+    case 'bit':
+      // mysql2 hands us the raw bytes (e.g. 0xAA); we store them as a binary string of '0'/'1'.
+      return 'bit'
     case 'datetime':
     case 'timestamp':
       return 'datetime'
@@ -227,7 +256,7 @@ async function introspectMysql(c: SqlClient): Promise<DbSchema> {
         type: mysqlType(str(r.data_type), str(r.column_type)),
         dbType: str(r.column_type) || str(r.data_type),
         nullable: yes(r.is_nullable),
-        generated: /GENERATED|PERSISTENT/i.test(str(r.extra)),
+        generated: isGeneratedExtra(str(r.extra)),
         identityAlways: false,
       },
     })),

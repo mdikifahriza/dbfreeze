@@ -91,7 +91,7 @@ Aturan `redact`: `'null'`, `'hash'`, `'fake-email'`, `'fake-phone'`, `'fake-text
 - `Tidak ketemu dbfreeze.config`: jalankan dari root project, atau `npx dbfreeze init`.
 - `package "tsx" belum terinstall`: `npm install -D tsx`, atau pakai config `.cjs`.
 - Seed batal dengan pesan checksum: file snapshot berubah atau rusak. `export` ulang.
-- Tabel ditolak karena tipe tidak didukung (array, interval, geometry, bit): masukkan ke `exclude`.
+- Tabel ditolak karena tipe tidak didukung (mis. `geometry`): masukkan ke `exclude`.
 - MySQL dengan FK melingkar: `createMysqlTruncate({ ignoreForeignKeys: true })` (hanya mode ORM).
 
 ## Pemakaian lewat kode

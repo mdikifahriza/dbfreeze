@@ -38,6 +38,8 @@ export type CanonicalType =
   | 'time' // "HH:MM:SS[.ffffff]"
   | 'json'
   | 'bytes' // base64 in the file
+  | 'bit' // binary string of '0'/'1' characters, e.g. "10101010" (pg bit/varbit, mysql bit)
+  | 'array' // pg array literal text, e.g. "{1,2,3}" (same-engine roundtrip only; MySQL has no arrays)
   | 'unsupported'
 
 export interface ColumnSchema {

@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { detectDeferredColumns, readPrismaTables } from '../src/introspect/prisma'
+import { isGeneratedExtra } from '../src/sql/introspect'
 import { postgresTruncate } from '../src/truncate/postgres'
 import { createMysqlTruncate, mysqlTruncate } from '../src/truncate/mysql'
 import { sqliteTruncate } from '../src/truncate/sqlite'
@@ -85,6 +86,16 @@ model B {
   a   A @relation(fields: [aId], references: [id])
 }`)
   assert.equal(detectDeferredColumns(file).warnings.length, 2)
+})
+
+test('mysql: DEFAULT CURRENT_TIMESTAMP (EXTRA=DEFAULT_GENERATED) BUKAN kolom generated', () => {
+  assert.equal(isGeneratedExtra('DEFAULT_GENERATED'), false)
+  assert.equal(isGeneratedExtra('auto_increment'), false)
+  assert.equal(isGeneratedExtra('STORED GENERATED'), true)
+  assert.equal(isGeneratedExtra('VIRTUAL GENERATED'), true)
+  assert.equal(isGeneratedExtra('VIRTUAL GENERATED, DEFAULT_GENERATED'), true)
+  assert.equal(isGeneratedExtra('PERSISTENT'), true)
+  assert.equal(isGeneratedExtra(''), false)
 })
 
 async function collect(fn: (run: (s: string) => Promise<void>) => Promise<void>) {

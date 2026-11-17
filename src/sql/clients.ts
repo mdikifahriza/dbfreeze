@@ -25,6 +25,8 @@ export function pgClient(pool: any): SqlClient {
         let broken = false
         try {
           await conn.query(options?.mode === 'read' ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN')
+          // Snapshot values are UTC by contract; make array_out / any raw text rendering follow suit.
+          if (options?.mode === 'read') await conn.query("SET LOCAL TIME ZONE 'UTC'")
           try {
             const result = await fn(wrap(conn, true))
             await conn.query('COMMIT')
