@@ -1,3 +1,6 @@
 node_modules
 dist
 *.tgz
+
+# Test-suite dikerjakan lokal — tidak dipublish ke repo publik
+/test/
